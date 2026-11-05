@@ -15,4 +15,4 @@ __pycache__/
 videos/*.mp4
 
 # Generated numerical results
-results/*.npz
+results/*.npzresults/

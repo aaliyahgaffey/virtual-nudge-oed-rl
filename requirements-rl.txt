@@ -1,0 +1,5 @@
+-r requirements-base.txt
+gymnasium>=1.0
+stable-baselines3>=2.3
+scikit-learn>=1.4
+joblib>=1.4

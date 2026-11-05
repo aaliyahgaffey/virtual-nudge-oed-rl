@@ -1,0 +1,571 @@
+<mujoco model="rrrs_spacecraft_single_nudge_no_vision">
+    <compiler angle="degree"/>
+
+    <!--
+        Zero-g free-floating servicing spacecraft + RRRS arm + free-floating RSO.
+
+        v19 (single-nudge, no-vision variant): both onboard cameras have been
+        removed. Target pose is no longer estimated from any rendered image;
+        see pose_sensor.py, which injects noise directly onto MuJoCo's ground
+        truth to stand in for an onboard relative-navigation estimate. This
+        experiment also does not run the robust/chance-inflated CBF safety
+        filter (robust_cbf.py is still included in the project but unused by
+        default); see README_SINGLE_NUDGE.md for why.
+
+        Collision-mask convention (bit fields):
+          bit 0 (1): servicing-spacecraft structure
+          bit 1 (2): manipulator structure
+          bit 2 (4): asteroid / target
+          bit 3 (8): dedicated compliant nudge pad
+
+        Every real servicing-spacecraft structure geom can still physically
+        collide with the asteroid.  In this version, the active CBF does not
+        constrain spacecraft-to-asteroid separation; only the dedicated nudge
+        pad is intended by the experiment logic to make planned target contact.
+        MuJoCo contact remains a physical backstop for target interactions.
+
+        The blue group-5 ellipsoids are non-contact virtual geometry used by
+        the self-collision HOCBF.  They do not create MuJoCo contact forces.
+
+        The short passive slide spring at the probe tip approximates the soft
+        contact concept in Meng, Liang & Ma (2019): gentle force over a longer
+        interval produces a measurable impulse without a hard impact.
+    -->
+    <option
+        gravity="0 0 0"
+        timestep="0.002"
+        integrator="implicit">
+        <flag nativeccd="enable"/>
+    </option>
+
+    <asset>
+        <texture
+            name="skybox"
+            type="skybox"
+            builtin="gradient"
+            rgb1="0.00 0.00 0.00"
+            rgb2="0.015 0.02 0.05"
+            width="512"
+            height="3072"/>
+
+        <material name="bus_mat"      rgba="0.75 0.78 0.82 1"/>
+        <material name="mount_mat"    rgba="0.45 0.48 0.52 1"/>
+        <material name="link1_mat"    rgba="0.85 0.25 0.20 1"/>
+        <material name="link2_mat"    rgba="0.20 0.70 0.30 1"/>
+        <material name="link3_mat"    rgba="0.20 0.35 0.90 1"/>
+        <material name="ee_mat"       rgba="0.85 0.75 0.20 1"/>
+        <material name="asteroid_mat" rgba="0.35 0.32 0.28 1"/>
+
+        <mesh
+            name="asteroid_mesh"
+            file="asteroid.obj"
+            scale="0.921956130974350 0.921956130974350 0.921956130974350"
+            inertia="exact"/>
+    </asset>
+
+    <worldbody>
+        <light
+            name="sun"
+            pos="0 0 6"
+            dir="0 0 -1"
+            directional="true"
+            diffuse="1 1 1"
+            specular="0.2 0.2 0.2"/>
+
+        <!-- Start the servicer 1 m farther away than the previous model.
+             Asteroid remains at x=3 m; spacecraft COM starts at x=-1 m,
+             giving 4 m initial COM-to-COM separation. -->
+        <body name="spacecraft" pos="-1.0 0 0">
+            <freejoint name="spacecraft_free"/>
+
+            <inertial
+                pos="0 0 0"
+                mass="300"
+                diaginertia="41 52 61"/>
+
+            <!-- Main 1.2 x 1.0 x 0.8 m bus. -->
+            <geom
+                name="spacecraft_bus"
+                type="box"
+                size="0.6 0.5 0.4"
+                material="bus_mat"
+                contype="1"
+                conaffinity="6"/>
+
+            <!-- Fixed self-collision proxy for the spacecraft bus. -->
+            <geom
+                name="cbf_bus"
+                type="ellipsoid"
+                size="1.10 0.92 0.75"
+                rgba="0.15 0.55 1.0 0.16"
+                group="5"
+                contype="0"
+                conaffinity="0"/>
+
+            <!--
+                Special fixed proxy for the BUS FRONT FACE.
+
+                The full cbf_bus ellipsoid intentionally overlaps the link1
+                mounting region, so it cannot define a meaningful link1-bus
+                barrier.  This VERY THIN face-like ellipsoid is paired only
+                with cbf_link1_distal.  Its dimensions closely track the
+                physical x=+0.60 m bus face instead of adding a large artificial
+                x-direction keep-out thickness.
+            -->
+            <geom
+                name="cbf_bus_front"
+                type="ellipsoid"
+                pos="0.60 0 0"
+                size="0.005 0.50 0.40"
+                rgba="0.20 0.75 1.0 0.22"
+                group="5"
+                contype="0"
+                conaffinity="0"/>
+
+            <!--
+                Short external arm pedestal.  The original joint axis was exactly
+                on the x=+0.60 m bus face while link1 had a 0.06 m capsule radius,
+                so the physical link geometry intersected the bus even at q1=0.
+                Moving the hinge axis to x=0.68 m provides 0.02 m nominal surface
+                clearance while the pedestal visually connects it to the bus.
+            -->
+            <geom
+                name="cbf_arm_mount"
+                type="ellipsoid"
+                pos="0.64 0 0"
+                size="0.12 0.22 0.22"
+                rgba="0.15 0.55 1.0 0.16"
+                group="5"
+                contype="0"
+                conaffinity="0"/>
+
+            <geom
+                name="arm_mount"
+                type="box"
+                pos="0.64 0 0"
+                size="0.04 0.10 0.10"
+                material="mount_mat"
+                contype="1"
+                conaffinity="6"/>
+
+            <!--
+                v19 no-vision change: the bus-fixed nav_cam is REMOVED.  This
+                experiment variant no longer estimates target pose from any
+                rendered image; the onboard estimate is instead ground truth
+                plus injected sensor noise (see pose_sensor.py).  A camera
+                body/geom left in the model but never rendered is harmless,
+                but keeping it around invites a future notebook to silently
+                depend on it again, so it is deleted outright.  Re-add a
+                <camera name="nav_cam" pos="0.64 -0.25 0.48"
+                quat="0.5 0.5 -0.5 -0.5" fovy="55"/> here if a vision-based
+                variant is ever revived.
+            -->
+
+            <body name="link1" pos="0.68 0 0">
+                <joint
+                    name="joint1"
+                    type="hinge"
+                    axis="0 0 1"
+                    limited="true"
+                    range="-170 170"
+                    damping="0.10"/>
+
+                <inertial
+                    pos="0.35 0 0"
+                    mass="10"
+                    diaginertia="0.018 0.4173 0.4173"/>
+
+                <geom
+                    name="link1_geom"
+                    type="capsule"
+                    fromto="0 0 0 0.70 0 0"
+                    size="0.060"
+                    material="link1_mat"
+                    contype="2"
+                    conaffinity="7"/>
+
+                <geom
+                    name="cbf_link1"
+                    type="ellipsoid"
+                    pos="0.35 0 0"
+                    size="0.47 0.12 0.12"
+                    rgba="0.15 0.55 1.0 0.16"
+                    group="5"
+                    contype="0"
+                    conaffinity="0"/>
+
+                <!--
+                    Distal link1 self-collision proxy used ONLY for the
+                    link1-to-bus-front barrier.  It deliberately omits the
+                    immediate joint neighborhood, where conservative full-body
+                    ellipsoids would overlap by construction.  The 0.065 m
+                    transverse semi-axes closely approximate the physical
+                    link1 capsule radius (0.060 m) with only 5 mm inflation.
+                -->
+                <geom
+                    name="cbf_link1_distal"
+                    type="ellipsoid"
+                    pos="0.42 0 0"
+                    size="0.28 0.065 0.065"
+                    rgba="0.20 0.75 1.0 0.22"
+                    group="5"
+                    contype="0"
+                    conaffinity="0"/>
+
+                <body
+                    name="link2"
+                    pos="0.70 0 0"
+                    quat="0.70710678 0 0 0.70710678">
+
+                    <joint
+                        name="joint2"
+                        type="hinge"
+                        axis="0 0 1"
+                        limited="true"
+                        range="-150 150"
+                        damping="0.10"/>
+
+                    <inertial
+                        pos="0.30 0 0"
+                        mass="8"
+                        diaginertia="0.0121 0.2461 0.2461"/>
+
+                    <geom
+                        name="link2_geom"
+                        type="capsule"
+                        fromto="0 0 0 0.60 0 0"
+                        size="0.055"
+                        material="link2_mat"
+                        contype="2"
+                        conaffinity="7"/>
+
+                    <geom
+                        name="cbf_link2"
+                        type="ellipsoid"
+                        pos="0.30 0 0"
+                        size="0.41 0.115 0.115"
+                        rgba="0.15 0.55 1.0 0.16"
+                        group="5"
+                        contype="0"
+                        conaffinity="0"/>
+
+                    <body
+                        name="link3"
+                        pos="0.60 0 0"
+                        quat="0.70710678 0 0 -0.70710678">
+
+                        <joint
+                            name="joint3"
+                            type="hinge"
+                            axis="0 0 1"
+                            limited="true"
+                            range="-150 150"
+                            damping="0.08"/>
+
+                        <inertial
+                            pos="0.225 0 0"
+                            mass="6"
+                            diaginertia="0.0075 0.1050 0.1050"/>
+
+                        <geom
+                            name="link3_geom"
+                            type="capsule"
+                            fromto="0 0 0 0.45 0 0"
+                            size="0.050"
+                            material="link3_mat"
+                            contype="2"
+                            conaffinity="7"/>
+
+                        <geom
+                            name="cbf_link3"
+                            type="ellipsoid"
+                            pos="0.225 0 0"
+                            size="0.33 0.105 0.105"
+                            rgba="0.15 0.55 1.0 0.16"
+                            group="5"
+                            contype="0"
+                            conaffinity="0"/>
+
+                        <body name="end_effector" pos="0.45 0 0">
+                            <joint
+                                name="spherical_joint"
+                                type="ball"
+                                damping="0.05"/>
+
+                            <inertial
+                                pos="0.10 0 0"
+                                mass="3"
+                                diaginertia="0.0100 0.0136 0.0164"/>
+
+                            <geom
+                                name="end_effector_geom"
+                                type="box"
+                                pos="0.10 0 0"
+                                size="0.10 0.08 0.06"
+                                material="ee_mat"
+                                contype="2"
+                                conaffinity="7"/>
+
+                            <geom
+                                name="cbf_end_effector"
+                                type="ellipsoid"
+                                pos="0.10 0 0"
+                                size="0.22 0.18 0.15"
+                                rgba="0.15 0.55 1.0 0.16"
+                                group="5"
+                                contype="0"
+                                conaffinity="0"/>
+
+                            <site
+                                name="grapple_point"
+                                pos="0.20 0 0"
+                                size="0.025"
+                                rgba="1 0 1 1"/>
+
+                            <!--
+                                Passive compliant nudge probe. The slide joint is
+                                free to compress in -x by 6 cm against a 200 N/m
+                                spring. Static 2 cm compression is therefore about
+                                4 N, in the same deliberately gentle force regime
+                                discussed in the identification paper. The actual
+                                experiment supervisor still enforces peak-force,
+                                impulse, torque, and duration limits.
+                            -->
+                            <body name="nudge_probe" pos="0.20 0 0">
+                                <joint
+                                    name="nudge_probe_slide"
+                                    type="slide"
+                                    axis="1 0 0"
+                                    limited="true"
+                                    range="-0.06 0.01"
+                                    springref="0"
+                                    stiffness="200"
+                                    damping="7"/>
+
+                                <inertial
+                                    pos="0.09 0 0"
+                                    mass="0.15"
+                                    diaginertia="0.00015 0.0016 0.0016"/>
+
+                                <geom
+                                    name="nudge_probe_shaft"
+                                    type="capsule"
+                                    fromto="0 0 0 0.16 0 0"
+                                    size="0.015"
+                                    material="mount_mat"
+                                    contype="2"
+                                    conaffinity="7"/>
+
+                                <!--
+                                    Fixed self-collision CBF proxy for the physical probe shaft.
+
+                                    Physical shaft:
+                                      capsule centerline x = 0.00 ... 0.16 m
+                                      radius = 0.015 m
+                                      physical +x extent = 0.175 m
+
+                                    This ellipsoid spans x = -0.02 ... +0.18 m,
+                                    so it fully encloses the physical shaft while
+                                    ending BEHIND the intentional nudge-pad surface
+                                    at x = +0.215 m.  The virtual ellipsoid is
+                                    used only for servicer self-collision checks.
+                                -->
+                                <geom
+                                    name="cbf_probe_shaft"
+                                    type="ellipsoid"
+                                    pos="0.08 0 0"
+                                    size="0.10 0.05 0.05"
+                                    rgba="0.15 0.55 1.0 0.16"
+                                    group="5"
+                                    contype="0"
+                                    conaffinity="0"/>
+
+                                <!-- Only this pad is an intended target-contact geom. -->
+                                <geom
+                                    name="nudge_pad_geom"
+                                    type="sphere"
+                                    pos="0.18 0 0"
+                                    size="0.035"
+                                    material="ee_mat"
+                                    contype="8"
+                                    conaffinity="4"
+                                    friction="0.40 0.005 0.0005"
+                                    solref="0.06 1"
+                                    solimp="0.90 0.95 0.002"/>
+
+                                <site
+                                    name="nudge_tip"
+                                    pos="0.215 0 0"
+                                    size="0.012"
+                                    rgba="0 1 1 1"/>
+                            </body>
+
+                            <!--
+                                v19 no-vision change: the eye-in-hand wrist_cam
+                                is REMOVED for the same reason as nav_cam above;
+                                no camera-based pose/surface estimation is
+                                used anywhere in this experiment variant.  Re-add
+                                a <camera name="wrist_cam" pos="0.08 0 0.14"
+                                quat="0.5 0.5 -0.5 -0.5" fovy="55"/> here if a
+                                vision-based variant is ever revived.
+                            -->
+                        </body>
+                    </body>
+                </body>
+            </body>
+        </body>
+
+        <!--
+            Free-floating RSO / asteroid.
+            These mass/inertia values are MuJoCo ground truth ONLY.  The onboard
+            estimator/controller must not read model.body_mass/body_inertia for
+            this body when doing unknown-parameter identification.
+        -->
+        <body
+            name="asteroid"
+            pos="3.0 0 0"
+            quat="1 0 0 0">
+
+            <freejoint name="asteroid_free"/>
+
+            <!-- Fixed-size asteroid keep-out envelope (special-case ellipsoid).
+                 The 0.60 x 0.60 x 0.64 m axes contain all vertices of the
+                 supplied, scaled asteroid mesh.  Extra offset is a fixed
+                 geometric allowance, NOT an uncertainty-adaptive margin.
+                 Group 5 and mass=0: virtual geometry contributes neither
+                 collision response nor asteroid mass/inertia.
+                 Never add the intentional nudge_pad_geom to this keep-out pair.
+                 The controller constrains cbf_bus vs this envelope. -->
+            <geom
+                name="cbf_asteroid_keepout"
+                type="ellipsoid"
+                size="0.60 0.60 0.64"
+                rgba="1.0 0.35 0.05 0.20"
+                group="5"
+                mass="0"
+                contype="0"
+                conaffinity="0"/>
+
+
+            <!--
+                The target emits bit 4 and accepts all real servicing structure
+                bits (1, 2, 8 -> 11). Thus a CBF failure cannot silently pass a
+                link or the bus through the asteroid in simulation.
+            -->
+            <geom
+                name="asteroid_geom"
+                type="mesh"
+                mesh="asteroid_mesh"
+                material="asteroid_mat"
+                density="1190"
+                contype="4"
+                conaffinity="11"/>
+        </body>
+    </worldbody>
+
+    <!--
+        MuJoCo normally filters direct parent-child collisions.  link1 is a
+        direct child of the spacecraft, so explicitly add bus-link1 contact.
+        The planner also includes this pair in its signed-distance barrier.
+    -->
+    <contact>
+        <pair
+            name="bus_link1_contact"
+            geom1="spacecraft_bus"
+            geom2="link1_geom"
+            condim="3"
+            friction="0.6 0.02 0.001"/>
+
+        <pair
+            name="nudge_pad_target_contact"
+            geom1="nudge_pad_geom"
+            geom2="asteroid_geom"
+            condim="3"
+            friction="0.40 0.005 0.0005"
+            solref="0.06 1"
+            solimp="0.90 0.95 0.002"/>
+    </contact>
+
+    <actuator>
+        <motor
+            name="motor_joint1"
+            joint="joint1"
+            ctrllimited="true"
+            ctrlrange="-40 40"/>
+
+        <motor
+            name="motor_joint2"
+            joint="joint2"
+            ctrllimited="true"
+            ctrlrange="-35 35"/>
+
+        <motor
+            name="motor_joint3"
+            joint="joint3"
+            ctrllimited="true"
+            ctrlrange="-25 25"/>
+
+        <motor
+            name="wrist_x"
+            joint="spherical_joint"
+            gear="1 0 0 0 0 0"
+            ctrllimited="true"
+            ctrlrange="-8 8"/>
+
+        <motor
+            name="wrist_y"
+            joint="spherical_joint"
+            gear="0 1 0 0 0 0"
+            ctrllimited="true"
+            ctrlrange="-8 8"/>
+
+        <motor
+            name="wrist_z"
+            joint="spherical_joint"
+            gear="0 0 1 0 0 0"
+            ctrllimited="true"
+            ctrlrange="-8 8"/>
+
+        <motor
+            name="base_force_x"
+            joint="spacecraft_free"
+            gear="1 0 0 0 0 0"
+            ctrllimited="true"
+            ctrlrange="-5 5"/>
+
+        <motor
+            name="base_force_y"
+            joint="spacecraft_free"
+            gear="0 1 0 0 0 0"
+            ctrllimited="true"
+            ctrlrange="-5 5"/>
+
+        <motor
+            name="base_force_z"
+            joint="spacecraft_free"
+            gear="0 0 1 0 0 0"
+            ctrllimited="true"
+            ctrlrange="-5 5"/>
+
+        <motor
+            name="base_torque_x"
+            joint="spacecraft_free"
+            gear="0 0 0 1 0 0"
+            ctrllimited="true"
+            ctrlrange="-2 2"/>
+
+        <motor
+            name="base_torque_y"
+            joint="spacecraft_free"
+            gear="0 0 0 0 1 0"
+            ctrllimited="true"
+            ctrlrange="-2 2"/>
+
+        <motor
+            name="base_torque_z"
+            joint="spacecraft_free"
+            gear="0 0 0 0 0 1"
+            ctrllimited="true"
+            ctrlrange="-2 2"/>
+    </actuator>
+</mujoco>

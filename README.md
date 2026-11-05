@@ -2,7 +2,7 @@
 
 **Optimal Experimental Design (OED), Reinforcement Learning (RL), and Hybrid Action Selection**
 
-This repository investigates how to select a sequence of **three virtual nudges** to identify an asteroid's inertial properties. A nudge applies a modeled impulse to the asteroid, and the resulting motion is observed to update estimates of its **mass, center of mass, and inertia tensor**. The standard setup uses a **30-second observation interval after each nudge**.
+This repository investigates how to select a sequence of **three virtual nudges** to identify an asteroid's inertial properties. A nudge applies a modeled impulse to the asteroid, and the resulting motion is observed to update estimates of its **mass, center of mass, and inertia tensor**. The previous implementation allowed for adaptive observation periods. However, to facilitate a consistent comparison across OED, RL, and hybrid approaches, the current implementation uses a fixed 30-second observation interval after each nudge.
 
 Three action-selection approaches are considered:
 
